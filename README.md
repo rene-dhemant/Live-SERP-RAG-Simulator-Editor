@@ -4,6 +4,8 @@ A Node.js-based diagnostic tool that reverse-engineers the Retrieval-Augmented G
 
 This application simulates the exact deterministic retrieval and probabilistic generation phases of an AI search engine, allowing technical SEOs and content architects to measure and optimize their "Share of Context" (SoC) against live SERP competitors.
 
+![image](https://dhemant.consulting/wp-content/uploads/rag-sim-dcg.jpg)
+
 ## Technical Architecture & Pipeline
 
 The tool operates on an Express.js backend and executes a multi-stage RAG pipeline using a two-tier filtering system (Bi-Encoder and Cross-Encoder):
@@ -17,6 +19,8 @@ The tool operates on an Express.js backend and executes a multi-stage RAG pipeli
 4. **Generative Reranking (LLM-as-a-Judge / Cross-Encoder):** The Top 20 pool is passed to `gemini-2.5-pro` (operating at Temperature 0.0 for deterministic output). The LLM blindly scores each chunk from 0 to 3 based on structural metrics: Factual Density, Directness (BLUF), and Completeness.
 
 5. **Context Window Assembly & Synthesis:** The system sorts the final Top 5 chunks based primarily on the LLM Score and secondarily on Cosine Similarity. This forms the final Context Window. The LLM then synthesizes a simulated AI Overview with inline citations and generates a data-dense rewrite of the user's content to compete for the #1 citation slot.
+
+![image](https://dhemant.consulting/wp-content/uploads/rag-pipeline-overview.png)
 
 ## Prerequisites
 
@@ -58,3 +62,6 @@ http://localhost:3000
 ```
 
 _(Note: For production deployment, it is highly recommended to route the application through a secure reverse proxy such as Cloudflare Tunnels or Nginx/OpenLiteSpeed to manage SSL and port forwarding.)_
+
+
+![My Logo](https://dhemant.consulting/wp-content/uploads/dhemant-seo-consultancy-services-333.svg)
