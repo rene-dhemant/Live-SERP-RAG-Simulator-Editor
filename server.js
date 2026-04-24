@@ -5,6 +5,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const crypto = require('crypto');
 const path = require('path');
+const { RecursiveCharacterTextSplitter } = require("@langchain/textsplitters");
 
 const app = express();
 app.use(cors());
@@ -82,9 +83,31 @@ function extractPageData(html) {
     const $ = cheerio.load(html);
     const title = $('title').text().trim() || 'Unknown Document';
     
-    $('script, style, nav, header, footer, aside, noscript, iframe, svg, form, button').remove();
+    // Radical noise stripping
+    $('script, style, nav, header, footer, aside, noscript, iframe, svg, form, button, .footer, #footer, .cookie-banner').remove();
     
-    let contentHtml = $('main').html() || $('article').html() || $('.content').html() || $('body').html() || html;
+    let contentHtml = "";
+    
+    // Intelligent container targeting
+    const selectors = ['main', 'article', '#main', '#content', '.main-content', '.post-content', '.content'];
+    
+    for (const selector of selectors) {
+        const node = $(selector).first();
+        if (node.length > 0) {
+            // Validate the container has substantial text content
+            const textLength = node.text().trim().length;
+            if (textLength > 300) {
+                contentHtml = node.html();
+                break;
+            }
+        }
+    }
+    
+    // Fallback to body if structural containers failed
+    if (!contentHtml) {
+        contentHtml = $('body').html() || html;
+    }
+    
     return { title, content: contentHtml };
 }
 
@@ -97,7 +120,13 @@ function basicHtmlToMarkdown(html) {
     md = md.replace(/<strong[^>]*>(.*?)<\/strong>/gis, "**$1**");
     md = md.replace(/<li[^>]*>(.*?)<\/li>/gis, "\n* $1");
     md = md.replace(/(<([^>]+)>)/gi, "");
-    return md.replace(/\n{3,}/g, "\n\n").trim();
+    
+    // Aggressive Whitespace Normalization
+    md = md.replace(/^[ \t]+$/gm, ""); // Remove lines containing only spaces
+    md = md.replace(/[ \t]+/g, " ");   // Collapse multiple inline spaces
+    md = md.replace(/\n{3,}/g, "\n\n"); // Collapse 3+ newlines into exactly 2
+    
+    return md.trim();
 }
 
 // ==========================================
@@ -105,12 +134,12 @@ function basicHtmlToMarkdown(html) {
 // ==========================================
 async function runMasterRagPipeline(query, myUrl, myContent, myTitle, tavilyResults) {
     
-    // 1. Build Parent/Child Chunks for Your Site
-    const myData = buildSmartChunks(myContent, 'you', myTitle, myUrl);
+    // 1. Build Semantic Parent/Child Chunks for Your Site
+    const myData = await buildSmartChunks(myContent, 'you', myTitle, myUrl);
     let allParents = [...myData.parents];
     let allChildren = [...myData.children];
     
-    // 2. Build Parent/Child Chunks for SERP Competitors
+    // 2. Build Semantic Parent/Child Chunks for SERP Competitors
     const serpClassifications = await ragClassifySerpUrls(tavilyResults);
     let tavilyInfo = [];
     const myDomain = new URL(myUrl).hostname;
@@ -120,7 +149,7 @@ async function runMasterRagPipeline(query, myUrl, myContent, myTitle, tavilyResu
         const pageType = serpClassifications[result.url] || 'News/Article';
         tavilyInfo.push({ url: result.url, title: result.title, type: pageType });
         
-        const compData = buildSmartChunks(result.content, 'comp', result.title, result.url);
+        const compData = await buildSmartChunks(result.content, 'comp', result.title, result.url);
         allParents = allParents.concat(compData.parents);
         allChildren = allChildren.concat(compData.children);
     }
@@ -155,14 +184,13 @@ async function runMasterRagPipeline(query, myUrl, myContent, myTitle, tavilyResu
             seenParentIds.add(child.parentId);
             const parent = allParents.find(p => p.id === child.parentId);
             if (parent) {
-                // Transfer the high-precision child similarity score to the parent
                 parent.similarity = child.similarity; 
                 mappedParents.push(parent);
             }
         }
     }
 
-    // Filter Top 20 Parents (5 You, 15 Comp) for LLM Judge
+    // Filter Top 20 Parents for LLM Judge
     let myScored = mappedParents.filter(p => p.source === 'you').slice(0, 5);
     let compScored = mappedParents.filter(p => p.source === 'comp').slice(0, 15);
     const top20Retrieved = [...myScored, ...compScored];
@@ -212,54 +240,54 @@ async function runMasterRagPipeline(query, myUrl, myContent, myTitle, tavilyResu
         citation_winner_source: citationWinnerSource, best_you: bestYou, best_comp: bestComp,
         ai_overview: simulationsData.overview, citation_probability: simulationsData.probability,
         optimized_rewrite: optimizedRewrite, top_5_chunks: finalTop5, 
-        entity_gap: entityGap, info_gain: infoGain
+        entity_gap: entityGap, info_gain: infoGain,
+        my_extracted_text: myContent // Included for the Debug Accordion
     };
 }
 
-// PARENT-CHILD CHUNKING LOGIC
-function buildSmartChunks(content, sourceTag, title, url) {
-    const rawChunks = content.split("\n\n").map(c => c.trim()).filter(c => c);
-    let parents = [], children = [];
-    let currentParentText = "", parentCounter = 0;
+// LANGCHAIN SEMANTIC PARENT-CHILD CHUNKING LOGIC
+async function buildSmartChunks(content, sourceTag, title, url) {
+    let parents = [];
+    let children = [];
     const uniquePrefix = sourceTag + '_' + crypto.createHash('md5').update(url).digest('hex').substring(0, 5);
     const domain = new URL(url).hostname;
 
-    // 1. Build ~800 Char Parents
-    rawChunks.forEach(chunk => {
-        if (/^#+\s/.test(chunk) || currentParentText.length < 150) {
-            currentParentText += (currentParentText === "" ? "" : "\n\n") + chunk;
-        } else {
-            if ((currentParentText + "\n\n" + chunk).length > 800) {
-                const pId = `${uniquePrefix}_p${parentCounter++}`;
-                parents.push({ id: pId, source: sourceTag, text: `Source: ${domain} | Title: ${title}\n---\n${currentParentText}`, url: url });
-                currentParentText = chunk;
-            } else {
-                currentParentText += "\n\n" + chunk;
-            }
-        }
+    const parentSplitter = new RecursiveCharacterTextSplitter({
+        chunkSize: 800,
+        chunkOverlap: 100, 
+        separators: ["\n\n", "\n", ". ", "? ", "! ", " ", ""]
     });
-    if (currentParentText) {
-        parents.push({ id: `${uniquePrefix}_p${parentCounter}`, source: sourceTag, text: `Source: ${domain} | Title: ${title}\n---\n${currentParentText}`, url: url });
-    }
+    
+    const childSplitter = new RecursiveCharacterTextSplitter({
+        chunkSize: 200,
+        chunkOverlap: 40, 
+        separators: [". ", "? ", "! ", "\n", " ", ""] 
+    });
 
-    // 2. Break Parents into ~200 Char Children
-    parents.forEach(parent => {
-        // Split by sentences roughly
-        const sentences = parent.text.match(/[^.!?]+[.!?]+/g) || [parent.text];
-        let currentChildText = "", childCounter = 0;
+    const parentTexts = await parentSplitter.splitText(content);
+
+    for (let i = 0; i < parentTexts.length; i++) {
+        const pId = `${uniquePrefix}_p${i}`;
+        const parentFormattedText = `Source: ${domain} | Title: ${title}\n---\n${parentTexts[i]}`;
         
-        sentences.forEach(sentence => {
-            if ((currentChildText + sentence).length > 200 && currentChildText.length > 0) {
-                children.push({ id: `${parent.id}_c${childCounter++}`, parentId: parent.id, source: parent.source, text: currentChildText.trim() });
-                currentChildText = sentence;
-            } else {
-                currentChildText += (currentChildText === "" ? "" : " ") + sentence.trim();
-            }
+        parents.push({ 
+            id: pId, 
+            source: sourceTag, 
+            text: parentFormattedText, 
+            url: url 
         });
-        if (currentChildText) {
-            children.push({ id: `${parent.id}_c${childCounter}`, parentId: parent.id, source: parent.source, text: currentChildText.trim() });
+
+        const childTexts = await childSplitter.splitText(parentTexts[i]);
+        
+        for (let j = 0; j < childTexts.length; j++) {
+            children.push({ 
+                id: `${pId}_c${j}`, 
+                parentId: pId, 
+                source: sourceTag, 
+                text: childTexts[j] 
+            });
         }
-    });
+    }
 
     return { parents, children };
 }
@@ -273,9 +301,7 @@ function cosineSimilarity(vecA, vecB) {
     return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-// HYDE GENERATION (Hypothetical Document Embeddings)
 async function ragGenerateHyDE(query) {
-    // Using fast/cheap flash model for HyDE
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GOOGLE_API_KEY}`;
     const prompt = `Write a hypothetical, highly factual, and concise 1-paragraph answer to the following query. Do not use filler words. Just output the raw hypothetical answer.\nQuery: ${query}`;
     
@@ -283,7 +309,7 @@ async function ragGenerateHyDE(query) {
         const response = await axios.post(url, { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2 } }, { timeout: 45000 });
         return response.data.candidates[0].content.parts[0].text.trim();
     } catch (e) { 
-        return query; // Fallback to raw query if generation fails
+        return query; 
     }
 }
 
@@ -418,6 +444,13 @@ function renderResultsHtml(results) {
             html += `<li><span class="serp-badge ${badgeClass}">${info.type}</span><a href="${info.url}" target="_blank">${info.url}</a></li>`;
         });
         html += `</ul></div>`;
+    }
+
+    if (results.my_extracted_text) {
+        html += `<details class="extraction-accordion">
+                    <summary>🛠️ Debug: View Extracted Text from Your URL</summary>
+                    <div class="extraction-content">${results.my_extracted_text.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+                 </details>`;
     }
 
     html += `<div class="kpi-grid">
