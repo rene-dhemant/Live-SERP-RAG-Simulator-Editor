@@ -63,5 +63,6 @@ http://localhost:3000
 
 _(Note: For production deployment, it is highly recommended to route the application through a secure reverse proxy such as Cloudflare Tunnels or Nginx/OpenLiteSpeed to manage SSL and port forwarding.)_
 
+![image](https://dhemant.consulting/wp-content/uploads/ragsim-gui.png)
 
 ![My Logo](https://dhemant.consulting/wp-content/uploads/dhemant-seo-consultancy-services-333.svg)
