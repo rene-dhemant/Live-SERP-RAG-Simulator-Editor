@@ -20,7 +20,7 @@ The tool operates on an Express.js backend and executes a multi-stage RAG pipeli
 
 5. **Context Window Assembly & Synthesis:** The system sorts the final Top 5 chunks based primarily on the LLM Score and secondarily on Cosine Similarity. This forms the final Context Window. The LLM then synthesizes a simulated AI Overview with inline citations and generates a data-dense rewrite of the user's content to compete for the #1 citation slot.
 
-![image](https://dhemant.consulting/wp-content/uploads/rag-pipeline-overview.png)
+![image](https://dhemant.consulting/wp-content/uploads/rag-pipeline-simulator.png)
 
 ## Prerequisites
 
