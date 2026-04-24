@@ -104,10 +104,14 @@ function basicHtmlToMarkdown(html) {
 // PIPELINE LOGIC & GOOGLE AI CALLS
 // ==========================================
 async function runMasterRagPipeline(query, myUrl, myContent, myTitle, tavilyResults) {
-    const myChunks = buildSmartChunks(myContent, 'you', myTitle, myUrl);
-    const serpClassifications = await ragClassifySerpUrls(tavilyResults);
     
-    let compChunks = [];
+    // 1. Build Parent/Child Chunks for Your Site
+    const myData = buildSmartChunks(myContent, 'you', myTitle, myUrl);
+    let allParents = [...myData.parents];
+    let allChildren = [...myData.children];
+    
+    // 2. Build Parent/Child Chunks for SERP Competitors
+    const serpClassifications = await ragClassifySerpUrls(tavilyResults);
     let tavilyInfo = [];
     const myDomain = new URL(myUrl).hostname;
 
@@ -115,36 +119,55 @@ async function runMasterRagPipeline(query, myUrl, myContent, myTitle, tavilyResu
         if (result.url.includes(myDomain)) continue;
         const pageType = serpClassifications[result.url] || 'News/Article';
         tavilyInfo.push({ url: result.url, title: result.title, type: pageType });
-        compChunks = compChunks.concat(buildSmartChunks(result.content, 'comp', result.title, result.url));
+        
+        const compData = buildSmartChunks(result.content, 'comp', result.title, result.url);
+        allParents = allParents.concat(compData.parents);
+        allChildren = allChildren.concat(compData.children);
     }
 
-    if (myChunks.length === 0 && compChunks.length === 0) return { error: "No valid text chunks found." };
+    if (allParents.length === 0) return { error: "No valid text chunks found." };
 
-    const queryEmbedding = await ragGetEmbedding(query);
-    if (!queryEmbedding) return { error: "Failed to generate query embedding." };
+    // 3. HyDE: Generate Fake Document & Embed It
+    const hydeDocument = await ragGenerateHyDE(query);
+    const hydeEmbedding = await ragGetEmbedding(hydeDocument);
+    if (!hydeEmbedding) return { error: "Failed to generate HyDE embedding." };
 
-    const allChunks = [...myChunks, ...compChunks];
-    const textsToEmbed = allChunks.map(c => c.text);
-    
+    // 4. Batch Embed Only the Small CHILD Chunks
+    const textsToEmbed = allChildren.map(c => c.text);
     const batchEmbeddings = await ragBatchGetEmbeddings(textsToEmbed);
     if (!batchEmbeddings || batchEmbeddings.length !== textsToEmbed.length) {
         return { error: "Failed to generate batch embeddings." };
     }
 
-    let myScored = [];
-    let compScored = [];
-
-    allChunks.forEach((chunk, index) => {
-        chunk.similarity = cosineSimilarity(queryEmbedding, batchEmbeddings[index]);
-        if (chunk.source === 'you') myScored.push(chunk);
-        else compScored.push(chunk);
+    // 5. Calculate Semantic Match on Children
+    allChildren.forEach((child, index) => {
+        child.similarity = cosineSimilarity(hydeEmbedding, batchEmbeddings[index]);
     });
 
-    myScored.sort((a, b) => b.similarity - a.similarity);
-    compScored.sort((a, b) => b.similarity - a.similarity);
+    // 6. Sort Children and Map back to Parents (Auto-Merging)
+    allChildren.sort((a, b) => b.similarity - a.similarity);
+    
+    let mappedParents = [];
+    let seenParentIds = new Set();
 
-    const top20Retrieved = [...myScored.slice(0, 5), ...compScored.slice(0, 15)];
+    for (const child of allChildren) {
+        if (!seenParentIds.has(child.parentId)) {
+            seenParentIds.add(child.parentId);
+            const parent = allParents.find(p => p.id === child.parentId);
+            if (parent) {
+                // Transfer the high-precision child similarity score to the parent
+                parent.similarity = child.similarity; 
+                mappedParents.push(parent);
+            }
+        }
+    }
 
+    // Filter Top 20 Parents (5 You, 15 Comp) for LLM Judge
+    let myScored = mappedParents.filter(p => p.source === 'you').slice(0, 5);
+    let compScored = mappedParents.filter(p => p.source === 'comp').slice(0, 15);
+    const top20Retrieved = [...myScored, ...compScored];
+
+    // 7. Generative Reranking (Cross-Encoder)
     const gradedResults = await ragBatchLlmRerank(query, top20Retrieved);
     if (!gradedResults) return { error: "Failed to rerank chunks." };
 
@@ -155,6 +178,7 @@ async function runMasterRagPipeline(query, myUrl, myContent, myTitle, tavilyResu
         chunk.readiness = evalData ? evalData.readiness : { density: 'Low', directness: 'Low', completeness: 'Low' };
     });
 
+    // 8. Final Sort for Context Window Assembly
     top20Retrieved.sort((a, b) => {
         if (b.llm_score === a.llm_score) return b.similarity - a.similarity;
         return b.llm_score - a.llm_score;
@@ -173,39 +197,71 @@ async function runMasterRagPipeline(query, myUrl, myContent, myTitle, tavilyResu
         if (chunk.source === 'comp' && !bestComp) bestComp = chunk;
     });
 
-    const aiOverview = await ragGenerateSynthesis(query, finalTop5);
-    let optimizedRewrite = '';
-    if (bestComp) {
-        optimizedRewrite = await ragGenerateOptimizedChunk(query, bestYou ? bestYou.text : '', bestComp.text);
-    }
+    // 9. Analytics & Optimization Phase
+    const compTextsInTop5 = finalTop5.filter(c => c.source === 'comp').map(c => c.text);
+    
+    const [simulationsData, optimizedRewrite, entityGap, infoGain] = await Promise.all([
+        ragGenerateSynthesisSimulations(query, finalTop5, myUrl),
+        (bestComp ? ragGenerateOptimizedChunk(query, bestYou ? bestYou.text : '', bestComp.text) : Promise.resolve('')),
+        (bestYou && compTextsInTop5.length > 0 ? ragAnalyzeEntityGap(bestYou.text, compTextsInTop5) : Promise.resolve([])),
+        (bestYou && compTextsInTop5.length > 0 ? ragScoreInformationGain(bestYou.text, compTextsInTop5) : Promise.resolve(null))
+    ]);
 
     return {
         tavily_info: tavilyInfo, my_top_5_count: myTop5Count, comp_top_5_count: compTop5Count,
         citation_winner_source: citationWinnerSource, best_you: bestYou, best_comp: bestComp,
-        ai_overview: aiOverview, optimized_rewrite: optimizedRewrite, top_5_chunks: finalTop5
+        ai_overview: simulationsData.overview, citation_probability: simulationsData.probability,
+        optimized_rewrite: optimizedRewrite, top_5_chunks: finalTop5, 
+        entity_gap: entityGap, info_gain: infoGain
     };
 }
 
+// PARENT-CHILD CHUNKING LOGIC
 function buildSmartChunks(content, sourceTag, title, url) {
     const rawChunks = content.split("\n\n").map(c => c.trim()).filter(c => c);
-    let chunks = [], currentChunk = "", counter = 0;
+    let parents = [], children = [];
+    let currentParentText = "", parentCounter = 0;
     const uniquePrefix = sourceTag + '_' + crypto.createHash('md5').update(url).digest('hex').substring(0, 5);
     const domain = new URL(url).hostname;
 
+    // 1. Build ~800 Char Parents
     rawChunks.forEach(chunk => {
-        if (/^#+\s/.test(chunk) || currentChunk.length < 150) {
-            currentChunk += (currentChunk === "" ? "" : "\n\n") + chunk;
+        if (/^#+\s/.test(chunk) || currentParentText.length < 150) {
+            currentParentText += (currentParentText === "" ? "" : "\n\n") + chunk;
         } else {
-            if ((currentChunk + "\n\n" + chunk).length > 800) {
-                chunks.push({ id: `${uniquePrefix}_${counter++}`, source: sourceTag, text: `Source: ${domain} | Title: ${title}\n---\n${currentChunk}`, url: url });
-                currentChunk = chunk;
+            if ((currentParentText + "\n\n" + chunk).length > 800) {
+                const pId = `${uniquePrefix}_p${parentCounter++}`;
+                parents.push({ id: pId, source: sourceTag, text: `Source: ${domain} | Title: ${title}\n---\n${currentParentText}`, url: url });
+                currentParentText = chunk;
             } else {
-                currentChunk += "\n\n" + chunk;
+                currentParentText += "\n\n" + chunk;
             }
         }
     });
-    if (currentChunk) chunks.push({ id: `${uniquePrefix}_${counter}`, source: sourceTag, text: `Source: ${domain} | Title: ${title}\n---\n${currentChunk}`, url: url });
-    return chunks;
+    if (currentParentText) {
+        parents.push({ id: `${uniquePrefix}_p${parentCounter}`, source: sourceTag, text: `Source: ${domain} | Title: ${title}\n---\n${currentParentText}`, url: url });
+    }
+
+    // 2. Break Parents into ~200 Char Children
+    parents.forEach(parent => {
+        // Split by sentences roughly
+        const sentences = parent.text.match(/[^.!?]+[.!?]+/g) || [parent.text];
+        let currentChildText = "", childCounter = 0;
+        
+        sentences.forEach(sentence => {
+            if ((currentChildText + sentence).length > 200 && currentChildText.length > 0) {
+                children.push({ id: `${parent.id}_c${childCounter++}`, parentId: parent.id, source: parent.source, text: currentChildText.trim() });
+                currentChildText = sentence;
+            } else {
+                currentChildText += (currentChildText === "" ? "" : " ") + sentence.trim();
+            }
+        });
+        if (currentChildText) {
+            children.push({ id: `${parent.id}_c${childCounter}`, parentId: parent.id, source: parent.source, text: currentChildText.trim() });
+        }
+    });
+
+    return { parents, children };
 }
 
 function cosineSimilarity(vecA, vecB) {
@@ -215,6 +271,20 @@ function cosineSimilarity(vecA, vecB) {
     }
     if (normA === 0 || normB === 0) return 0;
     return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+// HYDE GENERATION (Hypothetical Document Embeddings)
+async function ragGenerateHyDE(query) {
+    // Using fast/cheap flash model for HyDE
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GOOGLE_API_KEY}`;
+    const prompt = `Write a hypothetical, highly factual, and concise 1-paragraph answer to the following query. Do not use filler words. Just output the raw hypothetical answer.\nQuery: ${query}`;
+    
+    try {
+        const response = await axios.post(url, { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2 } }, { timeout: 45000 });
+        return response.data.candidates[0].content.parts[0].text.trim();
+    } catch (e) { 
+        return query; // Fallback to raw query if generation fails
+    }
 }
 
 async function ragGetEmbedding(text) {
@@ -265,21 +335,28 @@ async function ragBatchLlmRerank(query, chunks) {
     } catch (e) { return false; }
 }
 
-async function ragGenerateSynthesis(query, topChunks) {
-    if (!topChunks.length) return "Not enough context found.";
+async function ragGenerateSynthesisSimulations(query, topChunks, myUrl) {
+    if (!topChunks.length) return { overview: "Not enough context found.", probability: 0 };
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${GOOGLE_API_KEY}`;
     let prompt = `You are an AI Search Engine. Synthesize a final answer using ONLY the provided chunks.\nUser Query: ${query}\n\n`;
     topChunks.forEach((c, i) => { prompt += `--- Chunk ${i + 1} ---\nURL: ${c.url}\nText: ${c.text}\n\n`; });
-    prompt += `RULES: 
-    1. Write 1-2 paragraphs. 
-    2. Format in clean HTML (<p>, <br>). 
-    3. You MUST bold brand names and company names using <strong>. 
-    4. You MUST cite sources inline at the end of sentences using this exact HTML structure: <a href="THE_URL_FROM_THE_CHUNK" class="ai-citation" target="_blank">[1]</a> (replace 1 with the chunk number).`;
+    prompt += `RULES: 1. Write 1-2 paragraphs. 2. Format in clean HTML (<p>, <br>). 3. Bold brand names. 4. You MUST cite sources inline at the end of sentences using: <a href="THE_URL_FROM_THE_CHUNK" class="ai-citation" target="_blank">[1]</a> (replace 1 with the chunk number).`;
+
+    const requests = Array(5).fill().map(() => 
+        axios.post(url, { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.7 } }, { timeout: 90000 })
+    );
 
     try {
-        const response = await axios.post(url, { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2 } }, { timeout: 90000 });
-        return response.data.candidates[0].content.parts[0].text.trim();
-    } catch (e) { return 'Could not generate answer.'; }
+        const responses = await Promise.all(requests);
+        let overviews = responses.map(res => res.data.candidates[0].content.parts[0].text.trim());
+        
+        let citationHits = 0;
+        overviews.forEach(text => {
+            if (text.includes(myUrl)) citationHits++;
+        });
+
+        return { overview: overviews[0], probability: (citationHits / 5) * 100 };
+    } catch (e) { return { overview: 'Could not generate simulations.', probability: 0 }; }
 }
 
 async function ragGenerateOptimizedChunk(query, userText, compText) {
@@ -292,15 +369,42 @@ async function ragGenerateOptimizedChunk(query, userText, compText) {
     } catch (e) { return 'Failed to generate optimized text.'; }
 }
 
+async function ragAnalyzeEntityGap(myText, compTexts) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${GOOGLE_API_KEY}`;
+    const prompt = `Extract the top 5 most important Named Entities (specific tools, brand names, statistics, methodologies, concepts) present in the Competitor Texts that are MISSING from the User Text.
+    User Text: ${myText}
+    Competitor Texts: ${compTexts.join('\n---\n')}
+    Output ONLY a valid JSON array of strings representing the missing entities. If none, output [].`;
+
+    try {
+        const response = await axios.post(url, { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.0, response_mime_type: 'application/json' } }, { timeout: 60000 });
+        return JSON.parse(response.data.candidates[0].content.parts[0].text);
+    } catch (e) { return []; }
+}
+
+async function ragScoreInformationGain(myText, compTexts) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${GOOGLE_API_KEY}`;
+    const prompt = `Analyze the User Text against the Competitor Texts. Does the User Text provide unique "Information Gain" (net-new valuable information, unique perspectives, or novel data) not found in the competitors?
+    User Text: ${myText}
+    Competitor Texts: ${compTexts.join('\n---\n')}
+    Output ONLY a valid JSON object: {"score": "Low" | "Medium" | "High", "rationale": "1 short sentence explanation"}`;
+
+    try {
+        const response = await axios.post(url, { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.0, response_mime_type: 'application/json' } }, { timeout: 60000 });
+        return JSON.parse(response.data.candidates[0].content.parts[0].text);
+    } catch (e) { return { score: "Low", rationale: "Failed to analyze." }; }
+}
+
 // ==========================================
 // HTML TEMPLATE RENDERER
 // ==========================================
 function renderResultsHtml(results) {
-    // Tooltip Constants
     const tipSoC = "Share of Context (SoC) shows how many of the final Top 5 slots are occupied by your website vs competitors. Holding more slots mathematically increases your chance of controlling the final generative AI narrative.";
     const tipScore = "The AI Judge graded this text from 0 to 3 based on Factual Density, Directness, and Completeness.";
-    const tipVector = "The mathematical proximity (Cosine Similarity) between the User Query and this extracted text. Higher means better semantic keyword/topic match.";
+    const tipVector = "The mathematical proximity (Cosine Similarity) between the HyDE Document and the Child Text Chunk. Mapped to the Parent Chunk via Auto-Merging.";
     const tipWinner = "This chunk achieved the highest combined LLM Score and Semantic Match, making it the most likely text to be cited as the #1 source by an AI Search Engine.";
+    const tipInfoGain = "Measures whether your text adds net-new valuable data or unique perspectives to the LLM, rather than just repeating competitor consensus.";
+    const tipProbability = "We ran the AI synthesis engine 5 times consecutively to account for stochastic variance. This is the percentage of times your URL was successfully cited.";
 
     const mySoc = (results.my_top_5_count / 5) * 100;
     const compSoc = (results.comp_top_5_count / 5) * 100;
@@ -316,41 +420,59 @@ function renderResultsHtml(results) {
         html += `</ul></div>`;
     }
 
-    html += `<div style="background:#fff; padding:20px; border-radius:12px; border:1px solid #e2e8f0; margin-bottom:30px;">
-                <div class="soc-tooltip-wrapper">
-                    <h4 data-tip="${tipSoC}" style="margin:0 0 10px 0; color:#0f172a; display:inline-block; border-bottom:1px dotted #94a3b8;">Share of Context (Top 5 Final Chunks)</h4>
+    html += `<div class="kpi-grid">
+                <div class="kpi-card">
+                    <div class="soc-tooltip-wrapper">
+                        <h4 data-tip="${tipSoC}" class="kpi-title">Share of Context (Top 5 Chunks)</h4>
+                    </div>
+                    <div class="kpi-soc-labels"><span>You: ${results.my_top_5_count}</span><span>SERP: ${results.comp_top_5_count}</span></div>
+                    <div class="soc-bar">
+                        ${mySoc > 0 ? `<div class="soc-you" style="width: ${mySoc}%;"></div>` : ''}
+                        ${compSoc > 0 ? `<div class="soc-comp" style="width: ${compSoc}%;"></div>` : ''}
+                    </div>
                 </div>
-                <div style="display:flex; justify-content:space-between; font-size:14px; color:#64748b; font-weight:600;"><span>You: ${results.my_top_5_count}</span><span>SERP: ${results.comp_top_5_count}</span></div>
-                <div class="soc-bar">
-                    ${mySoc > 0 ? `<div class="soc-you" style="width: ${mySoc}%;"></div>` : ''}
-                    ${compSoc > 0 ? `<div class="soc-comp" style="width: ${compSoc}%;"></div>` : ''}
+                <div class="kpi-card">
+                    <h4 data-tip="${tipProbability}" class="kpi-title" style="border-bottom:1px dotted #94a3b8; display:inline-block; margin-bottom:10px;">Stochastic Citation Probability</h4>
+                    <div class="probability-score ${results.citation_probability >= 60 ? 'high' : (results.citation_probability > 0 ? 'med' : 'low')}">${results.citation_probability}%</div>
+                    <div class="probability-subtext">Based on 5 simulated generative iterations.</div>
                 </div>
              </div>`;
 
-    html += `<h3 style="margin-bottom:10px; color:#0f172a;">Head-to-Head: Synthesis Readiness</h3>`;
+    html += `<h3 style="margin-bottom:10px; color:#0f172a; margin-top: 30px;">Head-to-Head: Synthesis Readiness</h3>`;
     html += `<div class="rag-info-alert">💡 <strong>Pro Tip: High Semantic Match but Low LLM Score?</strong> Semantic Match gets you in the door; factual density wins the citation.</div>`;
     
     html += `<div class="vs-grid">`;
-    // Render Best You
     if (results.best_you) {
         const isWinner = results.citation_winner_source === 'you';
         const semMatch = Math.round(results.best_you.similarity * 100);
         const r = results.best_you.readiness;
+        const infoGain = results.info_gain;
+        
         html += `<div class="vs-card ${isWinner ? 'winner-card' : ''}">
                     ${isWinner ? `<div class="vs-badge" data-tip="${tipWinner}">🏆 #1 Citation</div>` : ''}
                     <div class="vs-header"><div><span style="color:var(--win-green);">Your Best Chunk</span></div>
                     <div class="metric-group"><span class="vs-score" data-tip="${tipScore}">LLM Score: ${results.best_you.llm_score}/3</span><span class="vs-vector" data-tip="${tipVector}">🎯 Semantic Match: ${semMatch}%</span></div></div>
                     <div class="rag-ai-rationale">🤖 <strong>AI Rationale:</strong> ${results.best_you.llm_reason}</div>
-                    <div class="synthesis-box"><h5>AI Readiness Report</h5>
+                    <div class="synthesis-box"><h5>AI Readiness & Data Report</h5>
                         <div class="synth-metric"><span class="synth-label">Density:</span> <span class="synth-value ${r.density.toLowerCase()}">${r.density}</span></div>
                         <div class="synth-metric"><span class="synth-label">Directness:</span> <span class="synth-value ${r.directness.toLowerCase()}">${r.directness}</span></div>
                         <div class="synth-metric"><span class="synth-label">Completeness:</span> <span class="synth-value ${r.completeness.toLowerCase()}">${r.completeness}</span></div>
-                    </div>
-                    <span class="chunk-label">Extracted Text:</span><div class="vs-quote">${results.best_you.text}</div>
+                        ${infoGain ? `<div class="synth-metric" style="margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0;"><span class="synth-label" data-tip="${tipInfoGain}">Information Gain:</span> <span class="synth-value ${infoGain.score.toLowerCase()}">${infoGain.score}</span></div>
+                        <div style="font-size: 11px; color: #64748b; line-height: 1.4; margin-top:4px;">${infoGain.rationale}</div>` : ''}
+                    </div>`;
+                    
+        if (results.entity_gap && results.entity_gap.length > 0) {
+            html += `<div class="entity-gap-box">
+                        <strong style="color: #b91c1c; display:block; margin-bottom:5px;">⚠️ Entity Gap Warning</strong>
+                        The SERP winners include these entities which are missing from your chunk: 
+                        <div style="margin-top:5px;">${results.entity_gap.map(e => `<span class="entity-badge">${e}</span>`).join('')}</div>
+                     </div>`;
+        }
+
+        html += `<span class="chunk-label">Extracted Text (Parent):</span><div class="vs-quote">${results.best_you.text}</div>
                  </div>`;
     }
 
-    // Render Best Comp
     if (results.best_comp) {
         const isWinner = results.citation_winner_source === 'comp';
         const semMatch = Math.round(results.best_comp.similarity * 100);
@@ -360,12 +482,12 @@ function renderResultsHtml(results) {
                     <div class="vs-header"><div><span style="color:var(--lose-red);">SERP's Best Chunk</span></div>
                     <div class="metric-group"><span class="vs-score" data-tip="${tipScore}">LLM Score: ${results.best_comp.llm_score}/3</span><span class="vs-vector" data-tip="${tipVector}">🎯 Semantic Match: ${semMatch}%</span></div></div>
                     <div class="rag-ai-rationale">🤖 <strong>AI Rationale:</strong> ${results.best_comp.llm_reason}</div>
-                    <div class="synthesis-box"><h5>AI Readiness Report</h5>
+                    <div class="synthesis-box"><h5>AI Readiness & Data Report</h5>
                         <div class="synth-metric"><span class="synth-label">Density:</span> <span class="synth-value ${r.density.toLowerCase()}">${r.density}</span></div>
                         <div class="synth-metric"><span class="synth-label">Directness:</span> <span class="synth-value ${r.directness.toLowerCase()}">${r.directness}</span></div>
                         <div class="synth-metric"><span class="synth-label">Completeness:</span> <span class="synth-value ${r.completeness.toLowerCase()}">${r.completeness}</span></div>
                     </div>
-                    <span class="chunk-label">Extracted Text:</span><div class="vs-quote">${results.best_comp.text}</div>
+                    <span class="chunk-label">Extracted Text (Parent):</span><div class="vs-quote">${results.best_comp.text}</div>
                  </div>`;
     }
     html += `</div>`; 
@@ -384,12 +506,11 @@ function renderResultsHtml(results) {
         
         if (results.my_top_5_count === 0) {
             html += `<div class="rag-info-alert" style="margin-top: 15px; margin-bottom: 20px; border-left-color: var(--lose-red); background: #fef2f2; color: #991b1b;">
-                        💡 <strong>Missing from the Top 5?</strong> If your website is failing to make it into the Context Window in our simulator, it means it is currently failing to get cited in real-world AI search engines for that query. That is exactly when you should use the tool's <strong>AIO Content Re-writer</strong> above to replace your fluffy text with the highly dense, optimized rewrite it suggests!
+                        💡 <strong>Missing from the Top 5?</strong> Use the tool's <strong>AIO Content Re-writer</strong> above to replace your fluffy text with the highly dense, optimized rewrite it suggests!
                     </div>`;
         }
         
         html += `<div class="chunk-list">`;
-        
         results.top_5_chunks.forEach((chunk, i) => {
             const domain = chunk.source === 'you' ? 'Your Site' : new URL(chunk.url).hostname;
             const youClass = chunk.source === 'you' ? 'source-you' : '';
@@ -404,7 +525,7 @@ function renderResultsHtml(results) {
     if (results.ai_overview) {
         html += `<div class="ai-overview-box">
                     <h3>✨ Simulated AI Overview</h3>
-                    <div class="ai-overview-disclaimer"><strong>Disclaimer:</strong> This is a probabilistic simulation based on your CURRENT, unoptimized website text.</div>
+                    <div class="ai-overview-disclaimer"><strong>Disclaimer:</strong> This is the output of 1 of the 5 synthesis simulations we ran using your CURRENT website text.</div>
                     <div class="ai-overview-content">${results.ai_overview}</div>
                  </div>`;
     }
@@ -414,5 +535,5 @@ function renderResultsHtml(results) {
 }
 
 app.listen(process.env.PORT || 3000, () => {
-    console.log(`🚀 RAG Server is running on port ${process.env.PORT || 3000}`);
+    console.log(`🚀 Advanced RAG Server is running on port ${process.env.PORT || 3000}`);
 });
