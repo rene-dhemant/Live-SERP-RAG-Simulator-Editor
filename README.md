@@ -35,7 +35,8 @@ Install dependencies
 The application requires Express, CORS, Axios, Cheerio, and Dotenv.
 ```bash
 npm install express cors axios cheerio dotenv
-```bash
+```
+
 **2. Configure Environment Variables**
 Edit .env file in the root directory of the project and add your API keys.
 ```bash
@@ -43,14 +44,17 @@ GOOGLE_API_KEY=your_gemini_api_key_here
 SCRAPER_API_KEY=your_scraperapi_key_here
 TAVILY_API_KEY=your_tavily_api_key_here
 PORT=3000
+```
 
 **3. Start the server**
 ```bash
 node server.js
+```
 
 **4. Access the Application**
 Open your web browser and navigate to:
 ```bash
 http://localhost:3000
+```
 
 _(Note: For production deployment, it is highly recommended to route the application through a secure reverse proxy such as Cloudflare Tunnels or Nginx/OpenLiteSpeed to manage SSL and port forwarding.)_
