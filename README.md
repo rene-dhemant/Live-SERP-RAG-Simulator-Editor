@@ -2,7 +2,7 @@
 
 A Node.js-based diagnostic tool that reverse-engineers the Retrieval-Augmented Generation (RAG) pipelines used by modern generative answer systems (e.g., Perplexity, Google AI Overviews). 
 
-This application simulates the exact deterministic retrieval and probabilistic generation phases of an AI search engine, allowing technical SEOs and content architects to measure and optimize their "Share of Context" (SoC) against live SERP competitors.
+This application simulates the exact deterministic retrieval and probabilistic generation phases of an AI search engine, allowing technical SEOs and content architects to measure and optimize their "Share of Context" (SoC) against live SERP competitors using advanced techniques like HyDE and Parent-Child chunking.
 
 ![image](https://dhemant.consulting/wp-content/uploads/rag-sim-dcg.jpg)
 
@@ -12,13 +12,21 @@ The tool operates on an Express.js backend and executes a multi-stage RAG pipeli
 
 1. **Concurrent Data Ingestion:** The server receives a target query and URL. It concurrently fetches the target URL's DOM via ScraperAPI and the Top 10 organic SERP winners via the Tavily Search API.
 
-2. **Extraction & Chunking:** Uses `cheerio` to strip DOM noise (scripts, styling, navigation). The remaining core content is parsed into structured Markdown and divided into semantic chunks (~800 characters) respecting heading boundaries.
+2. **Parent-Child Chunking:** Content is parsed into structured Markdown and divided into two tiers: `Parent` chunks (~800 characters) for LLM context, and `Child` chunks (~200 characters) for high-precision mathematical embedding.
 
-3. **Semantic Vector Search (Bi-Encoder):** All chunks are vectorized via batch processing using the `gemini-embedding-001` model. The server calculates the exact Cosine Similarity between the User Prompt vector and the Chunk vectors to establish an initial Top 20 Evaluation Pool.
+3. **HyDE (Hypothetical Document Embeddings):** The pipeline prompts a fast LLM (`gemini-2.5-flash`) to generate a hypothetical "perfect" answer to the user's query. This document is vectorized instead of the raw query to eliminate vocabulary mismatch.
 
-4. **Generative Reranking (LLM-as-a-Judge / Cross-Encoder):** The Top 20 pool is passed to `gemini-2.5-pro` (operating at Temperature 0.0 for deterministic output). The LLM blindly scores each chunk from 0 to 3 based on structural metrics: Factual Density, Directness (BLUF), and Completeness.
+4. **Semantic Vector Search (Bi-Encoder):** The `Child` chunks are vectorized via `gemini-embedding-001`. The server calculates the Cosine Similarity between the HyDE vector and the Child vectors.
 
-5. **Context Window Assembly & Synthesis:** The system sorts the final Top 5 chunks based primarily on the LLM Score and secondarily on Cosine Similarity. This forms the final Context Window. The LLM then synthesizes a simulated AI Overview with inline citations and generates a data-dense rewrite of the user's content to compete for the #1 citation slot.
+5. **Auto-Merging:** The highest-scoring Child chunks pass their similarity scores back to their respective Parent chunks. The top 20 Parents form the Evaluation Pool.
+
+6. **Generative Reranking (LLM-as-a-Judge / Cross-Encoder):** The Top 20 pool is passed to `gemini-2.5-pro` (Temperature 0.0). The LLM blindly scores each Parent chunk from 0 to 3 based on Factual Density, Directness (BLUF), and Completeness.
+
+7. **Advanced Analytics & Synthesis:**
+    * **Entity Gap Analysis:** Extracts Named Entities present in competitor chunks but missing from the user's chunk.
+    * **Information Gain Scoring:** Evaluates if the user's chunk provides net-new data compared to the SERP consensus.
+    * **Stochastic Simulation:** Fires 5 concurrent LLM generation requests (Temperature 0.7) using the final Context Window to calculate the exact Citation Probability, accounting for AI variance.
+    * **AIO Rewrite:** Generates a data-dense rewrite of the user's content to compete for the #1 citation slot.
 
 ![image](https://dhemant.consulting/wp-content/uploads/rag-pipeline-simulator.png)
 
