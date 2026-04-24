@@ -9,9 +9,13 @@ This application simulates the exact deterministic retrieval and probabilistic g
 The tool operates on an Express.js backend and executes a multi-stage RAG pipeline using a two-tier filtering system (Bi-Encoder and Cross-Encoder):
 
 1. **Concurrent Data Ingestion:** The server receives a target query and URL. It concurrently fetches the target URL's DOM via ScraperAPI and the Top 10 organic SERP winners via the Tavily Search API.
+
 2. **Extraction & Chunking:** Uses `cheerio` to strip DOM noise (scripts, styling, navigation). The remaining core content is parsed into structured Markdown and divided into semantic chunks (~800 characters) respecting heading boundaries.
+
 3. **Semantic Vector Search (Bi-Encoder):** All chunks are vectorized via batch processing using the `gemini-embedding-001` model. The server calculates the exact Cosine Similarity between the User Prompt vector and the Chunk vectors to establish an initial Top 20 Evaluation Pool.
+
 4. **Generative Reranking (LLM-as-a-Judge / Cross-Encoder):** The Top 20 pool is passed to `gemini-2.5-pro` (operating at Temperature 0.0 for deterministic output). The LLM blindly scores each chunk from 0 to 3 based on structural metrics: Factual Density, Directness (BLUF), and Completeness.
+
 5. **Context Window Assembly & Synthesis:** The system sorts the final Top 5 chunks based primarily on the LLM Score and secondarily on Cosine Similarity. This forms the final Context Window. The LLM then synthesizes a simulated AI Overview with inline citations and generates a data-dense rewrite of the user's content to compete for the #1 citation slot.
 
 ## Prerequisites
@@ -25,8 +29,8 @@ The tool operates on an Express.js backend and executes a multi-stage RAG pipeli
 ## Installation Guide
 
 **1. Clone the repository**
-A node.js server.
-**2. *Install dependencies*
+Install dependencies
+
 The application requires Express, CORS, Axios, Cheerio, and Dotenv.
 ```bash
 npm install express cors axios cheerio dotenv
