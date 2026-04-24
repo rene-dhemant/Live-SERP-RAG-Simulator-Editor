@@ -35,7 +35,7 @@ Install dependencies
 The application requires Express, CORS, Axios, Cheerio, and Dotenv.
 ```bash
 npm install express cors axios cheerio dotenv
-
+```bash
 **2. Configure Environment Variables**
 Edit .env file in the root directory of the project and add your API keys.
 ```bash
