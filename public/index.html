@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live SERP RAG Simulator</title>
+    <style>
+        .rag-wrapper { 
+            --bg-base: #f8fafc; --bg-card: #ffffff; --bg-input: #f1f5f9;
+            --text-main: #0f172a; --text-muted: #64748b; --border-color: #e2e8f0;
+            --accent-blue: #2563eb; --accent-glow: rgba(37, 99, 235, 0.15);
+            --win-green: #059669; --lose-red: #dc2626; 
+            --reason-bg: #fef9c3; --reason-text: #854d0e;
+            max-width: 1000px; margin: 40px auto; 
+            font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; 
+            line-height: 1.6; background: var(--bg-base); color: var(--text-main); 
+            padding: 30px; border-radius: 16px; box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.08); 
+            position: relative;
+        }
+        .rag-wrapper h2 { color: var(--text-main); margin-top: 0; font-weight: 800; letter-spacing: -0.5px; }
+        .rag-wrapper p { color: var(--text-muted); font-size: 15px; }
+        .rag-form { background: var(--bg-card); padding: 30px; border-radius: 12px; border: 1px solid var(--border-color); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+        .rag-form label { font-weight: 600; display: block; margin-bottom: 8px; color: var(--text-main); font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .rag-form input[type="text"], .rag-form input[type="url"] { width: 100%; padding: 14px 16px; margin-bottom: 24px; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-main); font-size: 15px; box-sizing: border-box; }
+        .rag-form input:focus { outline: none; border-color: var(--accent-blue); background: #ffffff; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }
+        .rag-btn { background: var(--accent-blue); color: #fff; padding: 16px 24px; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: 700; width: 100%; letter-spacing: 0.5px; transition: all 0.3s ease; box-shadow: 0 4px 10px var(--accent-glow); }
+        .rag-btn:hover:not(:disabled) { background: #1d4ed8; transform: translateY(-1px); box-shadow: 0 6px 15px rgba(37, 99, 235, 0.25); }
+        .rag-btn:disabled { background: #cbd5e1; cursor: not-allowed; }
+        
+        .rag-loader-overlay { display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(8px); z-index: 10; align-items: center; justify-content: center; flex-direction: column; border-radius: 12px; text-align: center; padding: 20px;}
+        .rag-spinner-container { position: relative; width: 90px; height: 90px; margin-bottom: 25px; display: flex; align-items: center; justify-content: center; }
+        .rag-spinner-face { width: 70px; height: 70px; border-radius: 50%; object-fit: cover; z-index: 2; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        .rag-spinner-ring { position: absolute; top: 0; left: 0; right: 0; bottom: 0; border: 4px solid var(--border-color); border-top-color: var(--accent-blue); border-radius: 50%; animation: rag-spin 1.2s linear infinite; z-index: 1; }
+        .rag-loader-text { color: var(--accent-blue); font-weight: 700; font-size: 18px; margin-bottom: 8px; transition: opacity 0.3s ease; }
+        .rag-loader-subtext { color: #64748b; font-size: 14px; max-width: 350px; display: none; }
+        @keyframes rag-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        .rag-results { margin-top: 40px; animation: rag-fade-in 0.5s ease-out; }
+        @keyframes rag-fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* UNIVERSAL TOOLTIP CSS */
+        [data-tip] { position: relative; cursor: help; }
+        [data-tip]::before {
+            content: attr(data-tip); position: absolute; bottom: 120%; right: 0; background-color: #1e293b; color: #f8fafc; padding: 12px; border-radius: 8px; font-size: 12px; white-space: pre-wrap; width: max-content; max-width: 260px; display: none; z-index: 50; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.2); font-weight: 500; line-height: 1.5; border: 1px solid #334155; text-align: left; text-transform: none; letter-spacing: normal;
+        }
+        [data-tip]::after {
+            content: ""; position: absolute; bottom: 100%; right: 15px; border-width: 6px; border-style: solid; border-color: #1e293b transparent transparent transparent; display: none; z-index: 50;
+        }
+        [data-tip]:hover::before, [data-tip]:hover::after { display: block; }
+        /* Shift tooltip to the left for left-aligned headers */
+        .soc-tooltip-wrapper [data-tip]::before { right: auto; left: 0; }
+        .soc-tooltip-wrapper [data-tip]::after { right: auto; left: 15px; }
+
+        .serp-list { background: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #e2e8f0; margin-bottom: 30px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02); }
+        .serp-list h4 { margin: 0 0 15px 0; font-size: 15px; color: #0f172a; }
+        .serp-list ul { margin: 0; padding: 0; list-style: none; font-size: 13px; color: #475569; }
+        .serp-list li { margin-bottom: 10px; display: flex; align-items: center; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9; }
+        .serp-list li:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+        .serp-list a { color: var(--accent-blue); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 65%; font-weight: 500; }
+        .serp-list a:hover { text-decoration: underline; }
+        .serp-badge { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 800; text-transform: uppercase; margin-right: 15px; min-width: 140px; text-align: center; flex-shrink: 0; letter-spacing: 0.5px; }
+        .serp-badge.aggregator-listicle { background: #fef08a; color: #854d0e; }
+        .serp-badge.vendor-product-page { background: #dbeafe; color: #1e40af; }
+        .serp-badge.comparison-review { background: #e0e7ff; color: #3730a3; }
+        .serp-badge.market-overview { background: #f3e8ff; color: #4338ca; }
+        .serp-badge.forum-ugc { background: #ffedd5; color: #c2410c; }
+        .serp-badge.news-article { background: #dcfce7; color: #166534; }
+        .serp-badge.other { background: #e2e8f0; color: #475569; }
+
+        .rag-info-alert { background: #eff6ff; border-left: 4px solid var(--accent-blue); padding: 15px 20px; border-radius: 6px; font-size: 14px; color: #1e3a8a; margin-bottom: 25px; line-height: 1.6; }
+        .rag-info-alert strong { color: #1e40af; font-weight: 700; }
+
+        .vs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 30px; }
+        @media (max-width: 768px) { .vs-grid { grid-template-columns: 1fr; } }
+        .vs-card { background: var(--bg-card); padding: 24px; border-radius: 12px; border: 1px solid var(--border-color); position: relative; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); display: flex; flex-direction: column; }
+        .vs-card.winner-card { border: 2px solid var(--accent-blue); box-shadow: 0 10px 20px rgba(37,99,235,0.15); background: #f4f8ff; }
+        .vs-badge { position: absolute; top: -12px; right: 20px; background: var(--accent-blue); color: white; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .vs-header { font-weight: 700; font-size: 16px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: flex-start;}
+        
+        .metric-group { display: flex; flex-direction: column; gap: 5px; align-items: flex-end; }
+        .vs-score { font-size: 13px; background: #e2e8f0; padding: 4px 10px; border-radius: 6px; color: #334155; font-weight: 700; display: inline-block; }
+        .vs-vector { font-size: 12px; background: #f0fdf4; padding: 3px 8px; border-radius: 6px; color: var(--win-green); font-weight: 700; border: 1px solid #bbf7d0; display: inline-block; }
+
+        .vs-quote { font-style: normal; color: #334155; font-size: 14px; background: #f8fafc; padding: 15px; border-radius: 8px; border-left: 4px solid #cbd5e1; flex-grow: 1; white-space: pre-wrap; margin-bottom: 0;}
+        .chunk-label { font-size: 12px; color: #64748b; text-transform: uppercase; font-weight: 700; margin: 20px 0 8px 0; display: block; letter-spacing: 0.5px;}
+        
+        .rag-ai-rationale { display: inline-block; background: var(--reason-bg); color: var(--reason-text); padding: 10px 15px; border-radius: 8px; font-size: 13px; font-weight: 600; margin-bottom: 15px; border: 1px solid #fde047; line-height: 1.5; width: 100%; box-sizing: border-box; }
+        
+        .synthesis-box { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; font-size: 13px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
+        .synthesis-box h5 { margin: 0 0 10px 0; font-size: 13px; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px;}
+        .synth-metric { display: flex; justify-content: space-between; margin-bottom: 6px; }
+        .synth-label { font-weight: 600; color: #475569; }
+        .synth-value.high { color: var(--win-green); font-weight: 700; }
+        .synth-value.medium { color: #d97706; font-weight: 700; }
+        .synth-value.low { color: var(--lose-red); font-weight: 700; }
+        
+        .aio-rewrite-box { background: linear-gradient(to bottom right, #f0fdfa, #ffffff); border: 2px dashed var(--win-green); border-radius: 12px; padding: 25px; margin-top: 30px; box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.1); }
+        .aio-header-wrap { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 10px; }
+        .aio-rewrite-box h3 { color: var(--win-green); margin: 0; display: flex; align-items: center; gap: 10px; }
+        .copy-btn { background: #ffffff; border: 1px solid #cbd5e1; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; color: #334155; display: flex; align-items: center; gap: 6px; transition: all 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        .copy-btn:hover { background: #f1f5f9; color: #0f172a; border-color: #94a3b8; }
+        .aio-rewrite-content { background: #ffffff; border: 1px solid #e2e8f0; padding: 20px; border-radius: 8px; font-size: 14px; color: #1e293b; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; margin-top: 15px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.02); line-height: 1.7; }
+        .aio-rewrite-instructions { font-size: 14px; color: #475569; margin-bottom: 0; }
+
+        .context-window-box { background: #ffffff; border: 1px solid #e2e8f0; padding: 25px; border-radius: 12px; margin-top: 40px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+        .context-window-box h3 { margin: 0 0 10px 0; color: #0f172a; font-size: 20px; display: flex; align-items: center; gap: 8px; }
+        .context-window-box > p { font-size: 14px; color: #64748b; margin-bottom: 20px; line-height: 1.6; }
+        .chunk-list { display: flex; flex-direction: column; gap: 15px; }
+        .chunk-item { background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #94a3b8; border-radius: 6px; padding: 15px; }
+        .chunk-item.source-you { border-left-color: var(--win-green); background: #f0fdf4; }
+        .chunk-meta { display: flex; gap: 15px; align-items: center; margin-bottom: 10px; font-size: 12px; font-weight: 700; color: #475569; text-transform: uppercase; }
+        .chunk-rank { background: #e2e8f0; padding: 2px 8px; border-radius: 12px; color: #334155; }
+        .chunk-domain { color: #0f172a; }
+        .chunk-score-badge { margin-left: auto; color: var(--accent-blue); background: #eff6ff; padding: 2px 8px; border-radius: 4px; }
+        .chunk-text-preview { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; color: #334155; white-space: pre-wrap; max-height: 120px; overflow-y: auto; padding-right: 5px; }
+        .chunk-text-preview::-webkit-scrollbar { width: 6px; }
+        .chunk-text-preview::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
+        .chunk-text-preview::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+        .ai-overview-box { background: #f8fafc; border: 1px solid #cbd5e1; border-left: 4px solid var(--accent-blue); padding: 25px; border-radius: 8px; margin-top: 30px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+        .ai-overview-box h3 { margin: 0 0 10px 0; color: #0f172a; display: flex; align-items: center; gap: 10px; font-size: 20px; }
+        .ai-overview-disclaimer { font-size: 13px; color: #64748b; margin-bottom: 20px; font-style: italic; line-height: 1.5; padding-bottom: 15px; border-bottom: 1px solid #e2e8f0; }
+        .ai-overview-content { font-size: 15px; line-height: 1.7; color: #1e293b; }
+        
+        .ai-citation { display: inline-block; background: #e2e8f0; color: var(--accent-blue); font-size: 11px; font-weight: 800; text-decoration: none; padding: 2px 6px; border-radius: 12px; margin-left: 4px; vertical-align: super; transition: all 0.2s; }
+        .ai-citation:hover { background: var(--accent-blue); color: #ffffff; transform: translateY(-1px); box-shadow: 0 2px 4px var(--accent-glow); }
+        .ai-overview-content strong { color: #0f172a; background: linear-gradient(120deg, #fef08a 0%, #fef08a 100%); background-repeat: no-repeat; background-size: 100% 30%; background-position: 0 90%; }
+
+        .soc-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; margin-top: 15px; background: #e2e8f0; }
+        .soc-you { background: var(--win-green); display: flex; transition: width 1s ease-in-out; }
+        .soc-comp { background: var(--lose-red); display: flex; transition: width 1s ease-in-out; }
+        .rag-error { background: #fef2f2; border-left: 4px solid var(--lose-red); color: #b91c1c; padding: 15px 20px; margin-bottom: 25px; border-radius: 6px; font-weight: 500; display: none; }
+    </style>
+</head>
+<body style="background: #e2e8f0; margin: 0; padding: 20px;">
+
+<div class="rag-wrapper">
+    <h2>Live SERP RAG Simulator & Editor</h2>
+    <p>We pull the Top 10 live organic search winners via Tavily, classify intent, simulate the AI Overview, and rewrite your content to beat them.</p>
+    
+    <div id="rag-error-box" class="rag-error"></div>
+
+    <form id="rag-form" class="rag-form">
+        <div id="rag-loader" class="rag-loader-overlay">
+            <div class="rag-spinner-container">
+                <img src="https://dhemant.consulting/wp-content/uploads/seo-berater-rene-dhemant-1.png" alt="René Dhemant" class="rag-spinner-face">
+                <div class="rag-spinner-ring"></div>
+            </div>
+            <div id="rag-loading-text" class="rag-loader-text">Initializing Audit...</div>
+            <div id="rag-loading-subtext" class="rag-loader-subtext">This is a comprehensive, deep-web RAG pipeline analyzing the top 10 URLs. It may take between 60 and 90 seconds.</div>
+        </div>
+        
+        <label for="rag_query">Target User Query / Prompt</label>
+        <input type="text" id="rag_query" required>
+        
+        <label for="rag_my_url">Your URL to Optimize</label>
+        <input type="url" id="rag_my_url" required>
+        
+        <button type="submit" id="rag-submit-btn" class="rag-btn">Audit & Rewrite Content</button>
+    </form>
+
+    <div id="results-container"></div>
+</div>
+
+<script>
+    document.getElementById("rag-form").addEventListener("submit", async function(e) {
+        e.preventDefault();
+        
+        const loader = document.getElementById("rag-loader");
+        const btn = document.getElementById("rag-submit-btn");
+        const errorBox = document.getElementById("rag-error-box");
+        const resultsContainer = document.getElementById("results-container");
+        const textEl = document.getElementById("rag-loading-text");
+        const subTextEl = document.getElementById("rag-loading-subtext");
+        
+        errorBox.style.display = "none";
+        resultsContainer.innerHTML = "";
+        loader.style.display = "flex";
+        subTextEl.style.display = "block";
+        btn.disabled = true;
+
+        const steps = [
+            "Fetching 10 live organic SERP competitors via Tavily...",
+            "Scraping & parsing your URL and competitor content...",
+            "Batch-processing text into Vector Embeddings...",
+            "Calculating Semantic Similarity metrics...",
+            "Gemini 2.5 Pro Judge is scoring the Top 20 chunks...",
+            "Drafting the simulated AI Overview...",
+            "Writing your AIO Content Rewrite... almost done!"
+        ];
+        let stepIndex = 0;
+        const textInterval = setInterval(() => {
+            if(stepIndex < steps.length - 1) {
+                textEl.style.opacity = 0;
+                setTimeout(() => { stepIndex++; textEl.innerHTML = steps[stepIndex]; textEl.style.opacity = 1; }, 300);
+            }
+        }, 11000); 
+
+        try {
+            const response = await fetch('/api/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    query: document.getElementById("rag_query").value,
+                    my_url: document.getElementById("rag_my_url").value
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.error) throw new Error(data.error);
+            
+            resultsContainer.innerHTML = data.html;
+            
+        } catch (error) {
+            errorBox.innerText = "Error: " + error.message;
+            errorBox.style.display = "block";
+        } finally {
+            clearInterval(textInterval);
+            loader.style.display = "none";
+            btn.disabled = false;
+            stepIndex = 0;
+            textEl.innerHTML = "Initializing Audit...";
+        }
+    });
+
+    function copyAioRewrite() {
+        const textToCopy = document.getElementById("aio-generated-text").innerText;
+        navigator.clipboard.writeText(textToCopy).then(() => {
+            const copyBtn = document.getElementById("aio-copy-btn");
+            const originalHtml = copyBtn.innerHTML;
+            copyBtn.innerHTML = "✓ Copied to Clipboard!";
+            copyBtn.style.color = "var(--win-green)";
+            copyBtn.style.borderColor = "var(--win-green)";
+            setTimeout(() => { 
+                copyBtn.innerHTML = originalHtml; 
+                copyBtn.style.color = "";
+                copyBtn.style.borderColor = "";
+            }, 2500);
+        });
+    }
+</script>
+</body>
+</html>
