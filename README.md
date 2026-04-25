@@ -31,10 +31,10 @@ The tool operates on an Express.js backend and executes a 10-stage, enterprise-g
 10. **HTML Rendering & Response Delivery:** Calculates stochastic citation probabilities (based on 5 concurrent generative simulations) and renders the analytical data into a visual diagnostic interface.
 
 **Additional Analytics & Synthesis:**
-    * **Entity Gap Analysis:** Extracts Named Entities present in competitor chunks but missing from the user's chunk.
-    * **Information Gain Scoring:** Evaluates if the user's chunk provides net-new data compared to the SERP consensus.
-    * **Stochastic Simulation:** Fires 5 concurrent LLM generation requests (Temperature 0.7) using the final Context Window to calculate the exact Citation Probability, accounting for AI variance.
-    * **AIO Rewrite:** Generates a data-dense rewrite of the user's content to compete for the #1 citation slot.
+- **Entity Gap Analysis:** Extracts Named Entities present in competitor chunks but missing from the user's chunk.
+- **Information Gain Scoring:** Evaluates if the user's chunk provides net-new data compared to the SERP consensus.
+- **Stochastic Simulation:** Fires 5 concurrent LLM generation requests (Temperature 0.7) using the final Context Window to calculate the exact Citation Probability, accounting for AI variance.
+- **AIO Rewrite:** Generates a data-dense rewrite of the user's content to compete for the #1 citation slot.
 
 ![image](https://dhemant.consulting/wp-content/uploads/rag-pipeline-simulator.png)
 
