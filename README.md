@@ -131,4 +131,10 @@ This tool and the resulting data represent a working hypothesis. If the technica
 
 Whether these directives consistently lead to increased "Share of Context" in live AI answer systems is the next phase of this ongoing analysis. I am opening this tool and the underlying methodology for industry discussion and empirical validation.
 
+## Contact René Dhemant
+
+- [E-Mail](mailto:rene@dhemant.consulting)
+- [XMPP](xmpp:rene-dhemant@jabber-server.de)
+- [Website](https://dhemant.consulting)
+
 ![My Logo](https://dhemant.consulting/wp-content/uploads/dhemant-seo-consultancy-services-333.svg)
