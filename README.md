@@ -114,7 +114,7 @@ Text chunks cannot be computed; they must be mapped as coordinates. An embedding
 The system calculates the geometric distance (Cosine Similarity) between the user's prompt and the available chunk vectors. This is a purely mathematical filter that isolates the top-matching chunks to form an initial evaluation pool.
 
 ### 7. Probabilistic LLM Re-Ranking (Cross-Encoder)
-Semantic similarity alone does not guarantee factual quality. A secondary evaluation model (LLM-as-a-Judge) reads the filtered chunks and scores them based on structural metrics: factual density, directness, and completeness. 
+Semantic similarity alone does not guarantee factual quality. A secondary evaluation model (a Cross-Encoder or LLM-as-a-Judge operating at zero temperature) reads the filtered chunks and scores them based on structural metrics: factual density, directness, and completeness. Because this inference phase is mechanically deterministic, its scoring logic can be reverse-engineered and optimized for.
 
 ### 8. Context Window Assembly
 The system aggregates the highest-scoring chunks from the Re-Ranking phase. These final, highly vetted text blocks are assembled to form the "Context Window"—the strict factual boundary the AI is allowed to use.
