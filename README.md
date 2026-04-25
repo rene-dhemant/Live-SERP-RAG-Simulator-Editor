@@ -8,21 +8,29 @@ This application simulates the exact deterministic retrieval and probabilistic g
 
 ## Technical Architecture & Pipeline
 
-The tool operates on an Express.js backend and executes a multi-stage RAG pipeline using a two-tier filtering system (Bi-Encoder and Cross-Encoder):
+The tool operates on an Express.js backend and executes a 10-stage, enterprise-grade pipeline:
 
-1. **Concurrent Data Ingestion:** The server receives a target query and URL. It concurrently fetches the target URL's DOM via ScraperAPI and the Top 10 organic SERP winners via the Tavily Search API.
+1. **Concurrent Data Ingestion:** Simultaneously fetches the user’s target URL via ScraperAPI and the live Top 10 organic SERP competitors via the Tavily Search API.
 
-2. **Parent-Child Chunking:** Content is parsed into structured Markdown and divided into two tiers: `Parent` chunks (~800 characters) for LLM context, and `Child` chunks (~200 characters) for high-precision mathematical embedding.
+2. **Content Extraction & Parsing:** Radically strips DOM noise (navigation, footers, cookie banners) and normalizes aggressive whitespace to extract only core textual content into clean Markdown.
 
-3. **HyDE (Hypothetical Document Embeddings):** The pipeline prompts a fast LLM (`gemini-2.5-flash`) to generate a hypothetical "perfect" answer to the user's query. This document is vectorized instead of the raw query to eliminate vocabulary mismatch.
+3. **Smart Text Chunking:** Utilizes LangChain's semantic splitters to divide text into `Parent` chunks (~800 chars) for LLM context, and `Child` chunks (~200 chars) for high-precision mathematical embedding, respecting NLP sentence boundaries.
 
-4. **Semantic Vector Search (Bi-Encoder):** The `Child` chunks are vectorized via `gemini-embedding-001`. The server calculates the Cosine Similarity between the HyDE vector and the Child vectors.
+4. **SERP Intent Classification:** Analyzes competitor URLs to classify the underlying search intent (e.g., listicle, vendor page, forum) to establish query consensus.
 
-5. **Auto-Merging:** The highest-scoring Child chunks pass their similarity scores back to their respective Parent chunks. The top 20 Parents form the Evaluation Pool.
+5. **Semantic Vector Generation (HyDE & Bi-Encoder):** Generates a Hypothetical Document Embedding (HyDE) representing the "perfect" answer, and vectorizes all Child chunks using `gemini-embedding-001`.
 
-6. **Generative Reranking (LLM-as-a-Judge / Cross-Encoder):** The Top 20 pool is passed to `gemini-2.5-pro` (Temperature 0.0). The LLM blindly scores each Parent chunk from 0 to 3 based on Factual Density, Directness (BLUF), and Completeness.
+6. **Deterministic Semantic Search (Auto-Merging):** Calculates Cosine Similarity between the HyDE vector and Child vectors. The highest-scoring Child chunks pass their scores back to their respective Parent chunks to form an initial Top 20 Evaluation Pool.
 
-7. **Advanced Analytics & Synthesis:**
+7. **Algorithmic LLM Re-Ranking (Cross-Encoder):** A secondary evaluation model (`gemini-2.5-pro` operating at `temperature: 0.0`) acts as a deterministic Cross-Encoder, scoring the Top 20 chunks based on factual density, directness, and completeness.
+
+8. **Context Window Assembly:** The system aggregates the final Top 5 highest-scoring chunks, establishing the strict factual boundary the AI is allowed to use.
+
+9. **Gen. Synthesis & Optimization Re-Write:** The Context Window is handed off to a probabilistic LLM to synthesize the final simulated answer. Simultaneously, the system runs Entity Gap and Information Gain analyses to draft a data-dense rewrite for the user.
+
+10. **HTML Rendering & Response Delivery:** Calculates stochastic citation probabilities (based on 5 concurrent generative simulations) and renders the analytical data into a visual diagnostic interface.
+
+**Additional Analytics & Synthesis:**
     * **Entity Gap Analysis:** Extracts Named Entities present in competitor chunks but missing from the user's chunk.
     * **Information Gain Scoring:** Evaluates if the user's chunk provides net-new data compared to the SERP consensus.
     * **Stochastic Simulation:** Fires 5 concurrent LLM generation requests (Temperature 0.7) using the final Context Window to calculate the exact Citation Probability, accounting for AI variance.
@@ -113,8 +121,8 @@ Text chunks cannot be computed; they must be mapped as coordinates. An embedding
 ### 6. Deterministic Semantic Search & Filtering
 The system calculates the geometric distance (Cosine Similarity) between the user's prompt and the available chunk vectors. This is a purely mathematical filter that isolates the top-matching chunks to form an initial evaluation pool.
 
-### 7. Probabilistic LLM Re-Ranking (Cross-Encoder)
-Semantic similarity alone does not guarantee factual quality. A secondary evaluation model (a Cross-Encoder or LLM-as-a-Judge operating at zero temperature) reads the filtered chunks and scores them based on structural metrics: factual density, directness, and completeness. Because this inference phase is mechanically deterministic, its scoring logic can be reverse-engineered and optimized for.
+### 7. Algorithmic LLM Re-Ranking (Cross-Encoder)
+A secondary evaluation model (`gemini-2.5-pro` operating at `temperature: 0.0`) acts as a deterministic Cross-Encoder, scoring the Top 20 chunks based on factual density, directness, and completeness.
 
 ### 8. Context Window Assembly
 The system aggregates the highest-scoring chunks from the Re-Ranking phase. These final, highly vetted text blocks are assembled to form the "Context Window"—the strict factual boundary the AI is allowed to use.
