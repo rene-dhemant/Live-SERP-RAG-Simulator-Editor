@@ -52,9 +52,12 @@ The tool operates on an Express.js backend and executes a 10-stage, enterprise-g
 
 Install dependencies
 
-The application requires Express, CORS, Axios, Cheerio, and Dotenv.
+The application requires Express, CORS, Axios, Cheerio, and Dotenv. Aswell as LangChain Text Splitters.
 ```bash
 npm install express cors axios cheerio dotenv
+```
+```bash
+npm install @langchain/textsplitters
 ```
 
 **2. Configure Environment Variables**
