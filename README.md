@@ -136,6 +136,17 @@ A generative LLM reads the Context Window and synthesizes the final answer. Simu
 ### 10. HTML Rendering & Response Delivery
 The raw analytical data, scores, and mathematical probabilities are rendered into a visual interface, allowing the consultant to audit the pipeline's decisions.
 
+## When Exactly Does the LLM-ChatBot Get Involved?
+
+| Phase | LLM involved? |
+| :--- | :--- |
+| **Ingestion** | ❌ sometimes |
+| **Embedding generation** | ❌ (embedding model, not chat LLM) |
+| **Retrieval** | ❌ |
+| **Ranking** | ❌ or small models |
+| **Context assembly** | ❌ |
+| **Answer synthesis** | ✅ YES — ONLY HERE |
+
 ## Open for Discussion
 
 This tool and the resulting data represent a working hypothesis. If the technical assumption holds true, that deterministic retrieval overrides brand authority and probabilistic variance, the output of this simulator *should* yield highly actionable optimization directives. 
