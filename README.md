@@ -158,5 +158,6 @@ Whether these directives consistently lead to increased "Share of Context" in li
 - [E-Mail](mailto:rene@dhemant.consulting)
 - [XMPP](xmpp:rene-dhemant@jabber-server.de)
 - [Website](https://dhemant.consulting)
+- [LinkedIn](https://www.linkedin.com/in/rene-dhemant/)
 
 ![My Logo](https://dhemant.consulting/wp-content/uploads/dhemant-seo-consultancy-services-333.svg)
