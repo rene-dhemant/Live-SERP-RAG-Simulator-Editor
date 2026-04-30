@@ -147,6 +147,8 @@ The raw analytical data, scores, and mathematical probabilities are rendered int
 | **Context assembly** | ❌ |
 | **Answer synthesis** | ✅ YES — ONLY HERE |
 
+![image](https://dhemant.consulting/wp-content/uploads/rene-dhemant-speaking-at-tech-seo-summit-2026.jpg)
+
 ## Architectural Boundaries: Query Fan-Out (Query Decomposition)
 
 To maintain transparency regarding the simulator's current capabilities, it is important to note that the pipeline currently does not utilize Query Fan-Out (Multi-Query Routing).
