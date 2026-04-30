@@ -147,6 +147,14 @@ The raw analytical data, scores, and mathematical probabilities are rendered int
 | **Context assembly** | ❌ |
 | **Answer synthesis** | ✅ YES — ONLY HERE |
 
+## Architectural Boundaries: Query Fan-Out (Query Decomposition)
+
+To maintain transparency regarding the simulator's current capabilities, it is important to note that the pipeline currently does not utilize Query Fan-Out (Multi-Query Routing).
+
+When processing complex, multi-intent prompts, production-grade AI Answer Systems dynamically split the user's initial prompt into several distinct sub-queries. The system then runs parallel retrieval processes for each sub-query to populate a much broader, multi-faceted context window before synthesis.
+
+Currently, this simulator processes the user prompt as a single, unified vector query (post-HyDE generation). While highly accurate for standard, single-intent queries, testing extremely complex or comparative prompts may yield a narrower context window than a true multi-query system. Implementing an LLM-based query decomposition routing layer is a planned architectural optimization for future releases.
+
 ## Open for Discussion
 
 This tool and the resulting data represent a working hypothesis. If the technical assumption holds true, that deterministic retrieval overrides brand authority and probabilistic variance, the output of this simulator *should* yield highly actionable optimization directives. 
